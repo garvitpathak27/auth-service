@@ -1,0 +1,95 @@
+sequenceDiagram
+    autonumber
+    actor Admin
+    actor ClientA as Client A
+    actor ClientB as Client B
+    participant LB as Load Balancer
+    participant Auth as auth-service\n(Django)
+    participant PGiam as PostgreSQL\n(IAM DB)
+    participant Redis as Redis\n(Cache + Pub/Sub)
+    participant MsgA as messaging-service\nInstance A
+    participant MsgB as messaging-service\nInstance B
+    participant PGmsg as PostgreSQL\n(Messaging DB)
+
+    rect rgb(230, 240, 255)
+    Note over ClientA,PGiam: Phase 1 - Authentication
+    ClientA->>LB: POST /auth/login (email, password)
+    LB->>Auth: forward request
+    Auth->>PGiam: SELECT user WHERE email=?
+    PGiam-->>Auth: user row (id, password hash, is_active)
+    Auth->>Auth: argon2.verify(password, hash)
+    Auth->>PGiam: SELECT roles + permissions via USER_ROLE/ROLE_PERMISSION
+    PGiam-->>Auth: roles, permissions
+    Auth->>Auth: pyjwt.encode(sub, roles, perms, jti, iss, aud, exp)
+    Auth->>Redis: SET session:{jti} "active" EX <exp_seconds>
+    Auth->>PGiam: INSERT REFRESH_TOKEN (hashed), INSERT LOGIN_HISTORY
+    Auth-->>ClientA: 200 { access_jwt, refresh_token }
+    end
+
+    rect rgb(230, 255, 235)
+    Note over ClientA,MsgB: Phase 2 - WebSocket connect (both users, different replicas)
+    ClientA->>LB: WS upgrade, Authorization: Bearer <jwt>
+    LB->>MsgA: route to Instance A
+    MsgA->>MsgA: verify JWT signature/iss/aud/exp locally
+    MsgA->>Redis: GET session:{jti}
+    Redis-->>MsgA: "active"
+    MsgA->>Redis: SET presence:{userA_id} "instanceA"
+    MsgA->>MsgA: store local map[userA_id] = socketA
+    MsgA-->>ClientA: 101 Switching Protocols (connected)
+    MsgA->>Redis: SUBSCRIBE auth.user.revoked
+    MsgA->>Redis: SUBSCRIBE chat.msg.*
+
+    ClientB->>LB: WS upgrade, Authorization: Bearer <jwt>
+    LB->>MsgB: route to Instance B
+    MsgB->>MsgB: verify JWT locally
+    MsgB->>Redis: GET session:{jti}
+    Redis-->>MsgB: "active"
+    MsgB->>Redis: SET presence:{userB_id} "instanceB"
+    MsgB->>MsgB: store local map[userB_id] = socketB
+    MsgB-->>ClientB: 101 Switching Protocols (connected)
+    MsgB->>Redis: SUBSCRIBE auth.user.revoked
+    MsgB->>Redis: SUBSCRIBE chat.msg.*
+    end
+
+    rect rgb(255, 250, 230)
+    Note over ClientA,PGmsg: Phase 3 - Cross-instance message delivery via Pub/Sub
+    ClientA->>MsgA: send message (conversation_id, body)
+    MsgA->>PGmsg: authorize membership, INSERT message
+    PGmsg-->>MsgA: message persisted (id, created_at)
+    MsgA->>Redis: PUBLISH chat.msg.{conversation_id} {payload}
+    Redis-->>MsgA: ack (delivered to subscribers)
+    Redis-->>MsgB: message event (fan-out, Instance B is a subscriber)
+    MsgB->>MsgB: lookup local map for recipient(s) in conversation
+    MsgB->>ClientB: push message over WebSocket
+    end
+
+    rect rgb(255, 230, 230)
+    Note over Admin,PGiam: Phase 4 - Admin revokes user (global logout / ban)
+    Admin->>Auth: POST /admin/users/{id}/ban
+    Auth->>PGiam: UPDATE USER SET is_active=false
+    Auth->>PGiam: UPDATE REFRESH_TOKEN SET revoked=true WHERE user_id=?
+    Auth->>PGiam: INSERT AUDIT_LOG (action="user_banned", performed_by, target_user)
+    Auth->>Redis: SET user:{userA_id}:status "revoked"
+    Auth->>Redis: SET session:{jti}:* "revoked" (all active sessions for user)
+    Auth->>Redis: PUBLISH auth.user.revoked {user_id, reason, ts}
+    Auth-->>Admin: 200 OK
+    end
+
+    rect rgb(255, 235, 245)
+    Note over Redis,MsgB: Phase 5 - Instant broadcast enforcement
+    Redis-->>MsgA: event: auth.user.revoked {userA_id}
+    Redis-->>MsgB: event: auth.user.revoked {userA_id}
+    MsgA->>MsgA: lookup local map[userA_id] -> socketA found
+    MsgA->>ClientA: close WebSocket (code 4401 "revoked")
+    MsgB->>MsgB: lookup local map[userA_id] -> not found, no-op
+    end
+
+    rect rgb(240, 240, 240)
+    Note over ClientA,Redis: Phase 6 - Reconnect attempt is denied everywhere
+    ClientA->>LB: WS reconnect, Authorization: Bearer <old jwt>
+    LB->>MsgB: routed to a different instance this time
+    MsgB->>MsgB: verify JWT signature locally (still cryptographically valid)
+    MsgB->>Redis: GET session:{jti} / user:{userA_id}:status
+    Redis-->>MsgB: "revoked"
+    MsgB-->>ClientA: reject connection, 4401 Unauthorized
+    end

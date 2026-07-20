@@ -1,0 +1,30 @@
+flowchart LR
+    client[Client]
+    iam[Auth Service / IAM]
+    users[(Users, roles, permissions)]
+    refresh[(Hashed refresh tokens)]
+    jwt{{Signed access JWT\nsub, roles, permissions, iss, aud, exp}}
+    messaging[Messaging Service]
+    messaging_data[(Conversations and messages)]
+    other[Other downstream service]
+    other_data[(Its own domain data)]
+
+    client -->|email + password| iam
+    iam -->|verify credentials| users
+    iam -->|store / rotate opaque refresh token| refresh
+    iam -->|issue short-lived JWT| client
+
+    client -->|Bearer JWT| messaging
+    messaging -->|verify signature, issuer, audience, expiry locally| jwt
+    messaging -->|authorise: permission + conversation membership| messaging_data
+
+    client -->|Bearer JWT| other
+    other -->|verify JWT locally| jwt
+    other -->|authorise its own resources| other_data
+
+    classDef iam fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef token fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef service fill:#fef3c7,stroke:#d97706,color:#78350f
+    class iam iam,users,refresh
+    class jwt token
+    class messaging,other,messaging_data,other_data service

@@ -1,0 +1,130 @@
+erDiagram
+    %% This is the IAM database only. Access JWTs are stateless and are not
+    %% persisted here; downstream services validate them and authorise their
+    %% own domain resources locally. See authentication-authorisation-flow.mmd.
+    %% USER_ROLE has a unique (user_id, role_id) constraint.
+    %% ROLE_PERMISSION has a unique (role_id, permission_id) constraint.
+    %% Role, Permission, UserRole, and RolePermission are the sole application
+    %% RBAC source of truth. Django Group and Django Permission are not used.
+    USER {
+        uuid id PK
+        string email UK
+        string username UK
+        string password
+        string first_name
+        string last_name
+        boolean is_active
+        boolean is_verified
+        boolean is_staff
+        datetime last_login
+        datetime created_at
+        datetime updated_at
+        datetime deleted_at
+    }
+
+    USER_PROFILE {
+        uuid id PK
+        uuid user_id FK,UK
+        string profile_picture
+        string phone_number
+        text bio
+        string country
+        string timezone
+        string language
+        date date_of_birth
+        datetime created_at
+        datetime updated_at
+    }
+
+    ROLE {
+        uuid id PK
+        string name UK
+        text description
+        datetime created_at
+        datetime updated_at
+    }
+
+    PERMISSION {
+        uuid id PK
+        string name UK
+        text description
+        datetime created_at
+        datetime updated_at
+    }
+
+    USER_ROLE {
+        uuid id PK
+        uuid user_id FK
+        uuid role_id FK
+        datetime assigned_at
+    }
+
+    ROLE_PERMISSION {
+        uuid id PK
+        uuid role_id FK
+        uuid permission_id FK
+        datetime assigned_at
+    }
+
+    REFRESH_TOKEN {
+        uuid id PK
+        uuid user_id FK
+        string token_hash UK
+        datetime expires_at
+        boolean revoked
+        datetime created_at
+        datetime last_used_at
+        string ip_address
+        text user_agent
+    }
+
+    LOGIN_HISTORY {
+        uuid id PK
+        uuid user_id FK
+        datetime login_time
+        datetime logout_time
+        string ip_address
+        text user_agent
+        string status
+        string failure_reason
+    }
+
+    EMAIL_VERIFICATION {
+        uuid id PK
+        uuid user_id FK
+        string verification_token_hash UK
+        datetime expires_at
+        datetime verified_at
+        datetime created_at
+    }
+
+    PASSWORD_RESET_TOKEN {
+        uuid id PK
+        uuid user_id FK
+        string token_hash UK
+        datetime expires_at
+        boolean used
+        datetime created_at
+    }
+
+    AUDIT_LOG {
+        uuid id PK
+        uuid performed_by_id FK
+        uuid target_user_id FK
+        string action
+        json metadata
+        string ip_address
+        datetime created_at
+    }
+
+    USER ||--|| USER_PROFILE : has
+    USER ||--o{ USER_ROLE : receives
+    ROLE ||--o{ USER_ROLE : assigned_to
+    ROLE ||--o{ ROLE_PERMISSION : grants
+    PERMISSION ||--o{ ROLE_PERMISSION : granted_by
+    USER ||--o{ REFRESH_TOKEN : owns
+    USER ||--o{ LOGIN_HISTORY : has
+    USER ||--o{ EMAIL_VERIFICATION : receives
+    USER ||--o{ PASSWORD_RESET_TOKEN : receives
+    USER ||--o{ AUDIT_LOG : performs
+    USER o|--o{ AUDIT_LOG : targets

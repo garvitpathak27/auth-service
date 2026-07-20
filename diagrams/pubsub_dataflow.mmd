@@ -1,0 +1,112 @@
+
+
+Pubsub redis dataflow · MMD
+flowchart TB
+    %% ============ CLIENT / EDGE LAYER ============
+    subgraph CLIENTS["Client Layer"]
+        clientA["Client A\n(WebSocket + REST)"]
+        clientB["Client B\n(WebSocket + REST)"]
+        adminUI["Admin Console"]
+    end
+ 
+    subgraph EDGE["Edge"]
+        lb["Load Balancer /\nAPI Gateway\n(sticky-less, any instance)"]
+    end
+ 
+    %% ============ AUTH SERVICE ============
+    subgraph AUTHSVC["auth-service (Django + djangogrpcframework)"]
+        authApi["Auth REST/gRPC endpoints\nlogin, refresh, logout, ban"]
+        authGrpc["gRPC server\nValidateToken / GetPermissions"]
+        argon["argon2-cffi\npassword hashing"]
+        pyjwtLib["PyJWT\nsign / verify access JWT"]
+    end
+ 
+    pg_iam[("PostgreSQL - IAM DB\nUSER, ROLE, PERMISSION,\nUSER_ROLE, ROLE_PERMISSION,\nREFRESH_TOKEN, AUDIT_LOG,\nLOGIN_HISTORY")]
+ 
+    %% ============ REDIS ============
+    subgraph REDIS["Redis Cluster (redis-py / hiredis)"]
+        direction TB
+        redisCache[("Cache keyspace\nsession:{jti} -> active|revoked, ttl=exp\nuser:{id}:status -> active|banned\npresence:{user_id} -> [instance_ids]\nratelimit:{user_id}")]
+        redisPubSub{{"Pub/Sub Channels\nchannel: auth.user.revoked\nchannel: chat.msg.{conversation_id}\nchannel: presence.update"}}
+    end
+ 
+    %% ============ MESSAGING SERVICE ============
+    subgraph MSGCLUSTER["messaging-service replicas (horizontally scaled)"]
+        direction LR
+        subgraph MSGA["Instance A"]
+            wsA["WS connection manager\nlocal map: user_id -> socket"]
+            subA["Redis subscriber thread"]
+        end
+        subgraph MSGB["Instance B"]
+            wsB["WS connection manager\nlocal map: user_id -> socket"]
+            subB["Redis subscriber thread"]
+        end
+    end
+ 
+    pg_msg[("PostgreSQL - Messaging DB\nCONVERSATION, MESSAGE,\nCONVERSATION_MEMBER")]
+ 
+    %% ============ OTHER DOWNSTREAM SERVICES ============
+    subgraph OTHER["Other downstream services"]
+        otherSvc["e.g. notification-service\n(gRPC client to auth-service)"]
+        otherData[("Its own domain data")]
+    end
+ 
+    %% ===== Flow 1: Auth =====
+    clientA -->|"1. POST /login\nemail+password"| lb --> authApi
+    authApi -->|"2. verify credentials"| argon
+    authApi -->|"3. query user, roles, permissions"| pg_iam
+    authApi -->|"4. sign short-lived JWT\n(sub, roles, perms, jti, exp)"| pyjwtLib
+    authApi -->|"5. write session marker\nsession:{jti}=active EX exp"| redisCache
+    authApi -->|"6. rotate + store hashed refresh token"| pg_iam
+    authApi -.->|"7. 200 OK: access + refresh token"| clientA
+ 
+    %% ===== Flow 2: WS connect + local + gRPC verification =====
+    clientA -->|"8. WS upgrade, Bearer JWT"| lb --> wsA
+    wsA -->|"9. verify signature/iss/aud/exp\n(local, stateless)"| pyjwtLib
+    wsA -->|"10. GET session:{jti} - revoked?"| redisCache
+    wsA -->|"11. optional: gRPC GetPermissions\n(cache-miss / authorize action)"| authGrpc
+    authGrpc --> pg_iam
+    wsA -->|"12. register presence:{user_id}=instanceA"| redisCache
+    clientB -->|"WS upgrade, Bearer JWT"| lb --> wsB
+    wsB --> redisCache
+ 
+    %% ===== Flow 3: Cross-instance chat delivery via Pub/Sub =====
+    clientA -->|"13. send message\n(conversation_id, body)"| wsA
+    wsA -->|"14. authorize membership,\npersist message"| pg_msg
+    wsA -->|"15. PUBLISH chat.msg.{conversation_id}"| redisPubSub
+    redisPubSub -->|"16. fan-out to all subscribers"| subA & subB
+    subB -->|"17. lookup local socket\nfor recipient, push over WS"| wsB
+    wsB -->|"18. deliver message"| clientB
+ 
+    %% ===== Flow 4: Instant revocation via Pub/Sub =====
+    adminUI -->|"19. POST /admin/ban {user_id}"| authApi
+    authApi -->|"20. is_active=false,\nrevoke all refresh_token rows"| pg_iam
+    authApi -->|"21. INSERT AUDIT_LOG"| pg_iam
+    authApi -->|"22. SET session:{jti}=revoked\n(all active jti's for user)"| redisCache
+    authApi -->|"23. PUBLISH auth.user.revoked\n{user_id, reason, ts}"| redisPubSub
+    redisPubSub -->|"24. broadcast to every\nmessaging-service subscriber"| subA & subB
+    subA -->|"25. lookup local map,\nclose WS if user connected here"| wsA
+    subB -->|"26. lookup local map,\nclose WS if user connected here"| wsB
+ 
+    %% ===== Flow 5: Reconnect denied =====
+    clientA -.->|"27. reconnect attempt\nwith same/old JWT"| lb -.-> wsA
+    wsA -.->|"28. GET session:{jti} / user:{id}:status"| redisCache
+    redisCache -.->|"29. revoked - deny,\nclose code 4401"| wsA
+    wsA -.->|"30. connection refused"| clientA
+ 
+    %% ===== Other services stay decoupled =====
+    otherSvc -->|"gRPC: validate token / check permission"| authGrpc
+    otherSvc --> otherData
+ 
+    classDef store fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef cache fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef svc fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef edge fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+ 
+    class pg_iam,pg_msg,otherData store
+    class redisCache,redisPubSub cache
+    class authApi,authGrpc,argon,pyjwtLib,wsA,subA,wsB,subB,otherSvc svc
+    class clientA,clientB,adminUI client
+    class lb edge
+ 
