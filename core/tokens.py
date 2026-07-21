@@ -127,8 +127,7 @@ def issue_token_pair(user, *, ip_address=None, user_agent=""):
     refresh_token, refresh_expires_at = _create_refresh_token(
         user, ip_address=ip_address, user_agent=user_agent
     )
-    access_token, access_claims = _encode_access_token(user)
-    register_access_session(user.id, access_claims["jti"], access_claims["exp"])
+    access_token = create_access_token(user)
     return {
         "access_token": access_token,
         "access_jwt": access_token,

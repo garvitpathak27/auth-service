@@ -1,4 +1,18 @@
 services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+      - "50051:50051"
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+
   postgres:
     image: postgres:17
     container_name: auth-postgres
@@ -10,9 +24,6 @@ services:
       POSTGRES_USER: auth_user
       POSTGRES_PASSWORD: garvitpathak2003
 
-    ports:
-      - "5432:5432"
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -21,9 +32,6 @@ services:
     container_name: auth-redis
 
     restart: unless-stopped
-
-    ports:
-      - "6379:6379"
 
 volumes:
   postgres_data:

@@ -295,9 +295,17 @@ class PasswordResetToken(UUIDModel):
 
 
 class AuditLog(UUIDModel):
+    """this is model for audit logs it contains id , performed by id ( foreign key ) , target_user_id (foreign key) , action , meta data  ,  ip address , created at  
+
+    Args:
+        UUIDModel (none ): -
+
+    Returns:
+        none: -
+    """
     performed_by = models.ForeignKey(
         User,
-        on_delete=models.PROTECT,
+        on_delete=models.PROTECT, # basically you cant delete perfomed by if its already being referenece
         related_name="performed_audit_logs",
     )
     target_user = models.ForeignKey(

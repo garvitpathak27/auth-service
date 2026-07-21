@@ -1,12 +1,16 @@
 import json
+from concurrent import futures
 from unittest.mock import patch
 
 import jwt
+import grpc
 from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import reverse
 
+from core.grpc import auth_pb2, auth_pb2_grpc
+from core.grpc_handlers import AuthServicer, grpc_handlers
 from core.models import (
     AuditLog,
     Permission,
@@ -92,6 +96,18 @@ class AuthenticationApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["active"])
         self.assertEqual(response.json()["claims"]["sub"], str(self.user.id))
+
+    def test_grpc_validate_token_matches_rest(self):
+        login = self.login(self.user, "a-safe-test-password").json()
+
+        response = AuthServicer().ValidateToken(
+            auth_pb2.TokenRequest(access_token=login["access_token"]), context=None
+        )
+
+        self.assertTrue(response.active)
+        self.assertEqual(response.user_id, str(self.user.id))
+        self.assertEqual(list(response.roles), ["member"])
+        self.assertEqual(list(response.permissions), ["messages.send"])
 
     def test_refresh_rotates_token_and_rejects_replay(self):
         login = self.login(self.user, "a-safe-test-password").json()
@@ -187,3 +203,47 @@ class AuthenticationApiTests(TestCase):
         self.assertNotIn(
             "user_permissions", {field.name for field in User._meta.get_fields()}
         )
+
+
+class GrpcAuthenticationTests(TransactionTestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="member@example.com", password="a-safe-test-password"
+        )
+        role = Role.objects.create(name="member")
+        permission = Permission.objects.create(name="messages.send")
+        UserRole.objects.create(user=self.user, role=role)
+        RolePermission.objects.create(role=role, permission=permission)
+
+    def login(self, user, password):
+        return self.client.post(
+            reverse("login"),
+            data=json.dumps({"email": user.email, "password": password}),
+            content_type="application/json",
+        )
+
+    def start_server(self):
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
+        grpc_handlers(server)
+        port = server.add_insecure_port("127.0.0.1:0")
+        server.start()
+        self.addCleanup(server.stop, 0)
+
+        channel = grpc.insecure_channel(f"127.0.0.1:{port}")
+        self.addCleanup(channel.close)
+        grpc.channel_ready_future(channel).result(timeout=5)
+        return auth_pb2_grpc.AuthServiceStub(channel)
+
+    def test_validate_token_over_a_real_grpc_channel(self):
+        login = self.login(self.user, "a-safe-test-password").json()
+        stub = self.start_server()
+
+        response = stub.ValidateToken(
+            auth_pb2.TokenRequest(access_token=login["access_token"])
+        )
+
+        self.assertTrue(response.active)
+        self.assertEqual(response.user_id, str(self.user.id))
+        self.assertEqual(list(response.roles), ["member"])
+        self.assertEqual(list(response.permissions), ["messages.send"])
