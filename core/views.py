@@ -21,6 +21,19 @@ from core.tokens import (
 )
 
 
+def health_check(request):
+    return JsonResponse({"status": "ok"})
+
+
+def service_info(request):
+    return JsonResponse(
+        {
+            "name": settings.EUREKA_APP_NAME,
+            "description": "Django authentication service for chat application",
+        }
+    )
+
+
 def _json_body(request):
     try:
         body = json.loads(request.body or "{}")

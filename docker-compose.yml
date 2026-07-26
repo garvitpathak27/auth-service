@@ -9,6 +9,13 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       REDIS_URL: redis://redis:6379/0
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka/
+      EUREKA_APP_NAME: auth-service
+      EUREKA_INSTANCE_HOST: auth-service
+      EUREKA_INSTANCE_PORT: "8000"
+      EUREKA_HOME_PAGE_URL: /
+      EUREKA_STATUS_PAGE_URL: /info/
+      EUREKA_HEALTH_CHECK_URL: /health/
     depends_on:
       - postgres
       - redis
@@ -16,6 +23,9 @@ services:
   postgres:
     image: postgres:17
     container_name: auth-postgres
+
+    ports:
+      - "5432:5432"
 
     restart: unless-stopped
 

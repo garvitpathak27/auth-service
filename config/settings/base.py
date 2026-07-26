@@ -36,7 +36,7 @@ GRPC_FRAMEWORK = {
 }
 
 LOCAL_APPS = [
-    "core",
+    "core.apps.CoreConfig",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + LOCAL_APPS + THIRD_PARTY_APPS
@@ -147,6 +147,14 @@ REVOKED_SESSION_MARKER_SECONDS = env.int(
     default=JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
 )
 REDIS_URL = env("REDIS_URL", default="")
+
+EUREKA_SERVER_URL = env("EUREKA_SERVER_URL", default="")
+EUREKA_APP_NAME = env("EUREKA_APP_NAME", default="auth-service")
+EUREKA_INSTANCE_HOST = env("EUREKA_INSTANCE_HOST", default="localhost")
+EUREKA_INSTANCE_PORT = env.int("EUREKA_INSTANCE_PORT", default=8000)
+EUREKA_HOME_PAGE_URL = env("EUREKA_HOME_PAGE_URL", default="/")
+EUREKA_STATUS_PAGE_URL = env("EUREKA_STATUS_PAGE_URL", default="/info/")
+EUREKA_HEALTH_CHECK_URL = env("EUREKA_HEALTH_CHECK_URL", default="/health/")
 
 if REDIS_URL:
     CACHES = {

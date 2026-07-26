@@ -27,6 +27,7 @@ from core.session_state import (
     user_sessions_key,
     user_status_key,
 )
+from core.eureka import register_eureka_service, shutdown_eureka_service
 
 
 class AuthenticationApiTests(TestCase):
@@ -203,6 +204,44 @@ class AuthenticationApiTests(TestCase):
         self.assertNotIn(
             "user_permissions", {field.name for field in User._meta.get_fields()}
         )
+
+
+class EurekaRegistrationTests(TestCase):
+    def tearDown(self):
+        shutdown_eureka_service()
+
+    @patch("core.eureka.eureka_client.init")
+    def test_registers_with_configured_eureka_settings(self, init):
+        with patch.object(settings, "EUREKA_SERVER_URL", "http://eureka-server:8761/eureka/"), patch.object(
+            settings, "EUREKA_APP_NAME", "auth-service"
+        ), patch.object(settings, "EUREKA_INSTANCE_HOST", "auth-service"), patch.object(
+            settings, "EUREKA_INSTANCE_PORT", 8000
+        ), patch.object(settings, "EUREKA_HOME_PAGE_URL", "/"), patch.object(
+            settings, "EUREKA_STATUS_PAGE_URL", "/info/"
+        ), patch.object(settings, "EUREKA_HEALTH_CHECK_URL", "/health/"):
+            register_eureka_service()
+
+        init.assert_called_once()
+        kwargs = init.call_args.kwargs
+        self.assertEqual(kwargs["eureka_server"], "http://eureka-server:8761/eureka/")
+        self.assertEqual(kwargs["app_name"], "auth-service")
+        self.assertEqual(kwargs["instance_host"], "auth-service")
+        self.assertEqual(kwargs["instance_port"], 8000)
+        self.assertEqual(kwargs["home_page_url"], "/")
+        self.assertEqual(kwargs["status_page_url"], "/info/")
+        self.assertEqual(kwargs["health_check_url"], "/health/")
+
+    def test_health_endpoint_is_available(self):
+        response = self.client.get(reverse("health-root"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_info_endpoint_is_available(self):
+        response = self.client.get(reverse("info-root"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["name"], settings.EUREKA_APP_NAME)
 
 
 class GrpcAuthenticationTests(TransactionTestCase):

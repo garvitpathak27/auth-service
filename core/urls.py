@@ -6,10 +6,14 @@ from core.views import (
     LogoutView,
     PermissionsView,
     RefreshView,
+    health_check,
+    service_info,
     ValidateTokenView,
 )
 
 urlpatterns = [
+    path("health/", health_check, name="health"),
+    path("info/", service_info, name="info"),
     path("login/", LoginView.as_view(), name="login"),
     path("refresh/", RefreshView.as_view(), name="refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),
