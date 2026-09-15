@@ -30,10 +30,10 @@ from core.session_state import (
 from core.eureka import register_eureka_service, shutdown_eureka_service
 
 
-class AuthenticationApiTests(TestCase):
-    def setUp(self):
-        cache.clear()
-        self.user = User.objects.create_user(
+class AuthenticationApiTests(TestCase): 
+    def setUp(self): #prepare everything 
+        cache.clear()#clearning the cache 
+        self.user = User.objects.create_user( 
             email="member@example.com", password="a-safe-test-password"
         )
         self.admin = User.objects.create_user(
@@ -69,58 +69,66 @@ class AuthenticationApiTests(TestCase):
             algorithms=[settings.JWT_ALGORITHM],
             audience=settings.JWT_AUDIENCE,
             issuer=settings.JWT_ISSUER,
-        )
+        ) # this is to see what is inside the token we can read what is inside like role permission and 
 
-    def test_login_issues_identity_and_permission_claims(self):
-        response = self.login(self.user, "a-safe-test-password")
+    def test_login_issues_identity_and_permission_claims(self): # when someone logs in does the authentication service give them the correct token and indentity regarding its roles and permission 
+        response = self.login(self.user, "a-safe-test-password") 
 
-        self.assertEqual(response.status_code, 200)
-        body = response.json()
+        self.assertEqual(response.status_code, 200) # ok 
+        body = response.json() # storing 
         claims = self.decode_access_token(body["access_token"])
         self.assertEqual(claims["sub"], str(self.user.id))
         self.assertEqual(claims["roles"], ["member"])
         self.assertEqual(claims["permissions"], ["messages.send"])
-        self.assertEqual(claims["token_type"], "access")
+        self.assertEqual(claims["token_type"], "access") # access token .. right person with right batch 
         self.assertEqual(body["access_jwt"], body["access_token"])
-        self.assertEqual(body["token_type"], "Bearer")
-        self.assertEqual(cache.get(access_session_key(claims["jti"])), ACTIVE)
+        self.assertEqual(body["token_type"], "Bearer") 
+        # to check the server side session information    
+        # jti should be marked active 
+        self.assertEqual(cache.get(access_session_key(claims["jti"])), ACTIVE) 
         self.assertEqual(cache.get(user_status_key(self.user.id)), ACTIVE)
         self.assertIn(claims["jti"], cache.get(user_sessions_key(self.user.id)))
 
     def test_validate_token_checks_the_session_marker(self):
+        """
+        this checks wheather the freshly generated authentication token is validated properly or not
+        """
         login = self.login(self.user, "a-safe-test-password").json()
 
         response = self.post_json(
             "validate-token", {"access_token": login["access_token"]}
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["active"])
+        self.assertEqual(response.status_code, 200) # validating token endpoint 
+        self.assertTrue(response.json()["active"]) #
         self.assertEqual(response.json()["claims"]["sub"], str(self.user.id))
 
     def test_grpc_validate_token_matches_rest(self):
+        """this is to test the same thing with the grpc endpoint ... the grpc is used in the app for inter service communication """
         login = self.login(self.user, "a-safe-test-password").json()
 
-        response = AuthServicer().ValidateToken(
+        response = AuthServicer().ValidateToken( # validation of the token 
             auth_pb2.TokenRequest(access_token=login["access_token"]), context=None
         )
 
-        self.assertTrue(response.active)
+        self.assertTrue(response.active) 
         self.assertEqual(response.user_id, str(self.user.id))
         self.assertEqual(list(response.roles), ["member"])
         self.assertEqual(list(response.permissions), ["messages.send"])
 
-    def test_refresh_rotates_token_and_rejects_replay(self):
+    def test_refresh_rotates_token_and_rejects_replay(self): 
+        """this is to check if the token are refreshed properly or not """
         login = self.login(self.user, "a-safe-test-password").json()
 
         refreshed = self.post_json("refresh", {"refresh_token": login["refresh_token"]})
         self.assertEqual(refreshed.status_code, 200)
-        self.assertNotEqual(login["refresh_token"], refreshed.json()["refresh_token"])
+        self.assertNotEqual(login["refresh_token"], refreshed.json()["refresh_token"])#this is to check that the new one is different from the old one 
 
         replay = self.post_json("refresh", {"refresh_token": login["refresh_token"]})
-        self.assertEqual(replay.status_code, 401)
+        self.assertEqual(replay.status_code, 401) # this is to see if we can use the old token or not 
 
     def test_logout_revokes_refresh_token_and_access_session(self):
+        """this it to check if the logout functionlity actually kills the user session or not """
         login = self.login(self.user, "a-safe-test-password").json()
         claims = self.decode_access_token(login["access_token"])
 
@@ -138,6 +146,7 @@ class AuthenticationApiTests(TestCase):
         self.assertEqual(rejected.status_code, 401)
 
     def test_permissions_endpoint_returns_current_rbac_for_valid_token(self):
+        """ this checks the permission end point """
         login = self.login(self.user, "a-safe-test-password").json()
 
         response = self.client.get(
@@ -151,6 +160,7 @@ class AuthenticationApiTests(TestCase):
         self.assertEqual(response.json()["permissions"], ["messages.send"])
 
     def test_admin_ban_globally_revokes_target_user(self):
+        """ banning of a user admin can ban the user only ... """
         target_login = self.login(self.user, "a-safe-test-password").json()
         admin_login = self.login(self.admin, "an-admin-test-password").json()
         target_claims = self.decode_access_token(target_login["access_token"])
@@ -188,6 +198,7 @@ class AuthenticationApiTests(TestCase):
         self.assertEqual(refresh_rejected.status_code, 401)
 
     def test_invalid_credentials_do_not_issue_a_token(self):
+        """this is to check wrong password"""
         response = self.post_json(
             "login", {"email": self.user.email, "password": "incorrect"}
         )
@@ -196,6 +207,7 @@ class AuthenticationApiTests(TestCase):
         self.assertEqual(response.json()["detail"], "Invalid credentials.")
 
     def test_custom_rbac_is_the_only_user_permission_source(self):
+        """ this is to check that we are using the rbac that we made rather than djangos native rbac system """
         self.assertEqual(self.user.role_names(), ["member"])
         self.assertEqual(self.user.permission_names(), ["messages.send"])
         self.assertTrue(self.user.has_rbac_permission("messages.send"))
@@ -245,6 +257,9 @@ class EurekaRegistrationTests(TestCase):
 
 
 class GrpcAuthenticationTests(TransactionTestCase):
+    """
+    we have to login using rest only but when we use rest we get the authentication token that we can use when we want to use other services 
+    """
     def setUp(self):
         cache.clear()
         self.user = User.objects.create_user(

@@ -8,17 +8,18 @@ from py_eureka_client import eureka_client
 
 
 logger = logging.getLogger(__name__)
-_registration_lock = threading.RLock()
+_registration_lock = threading.RLock() # this is to lock the eureka registration so that there are no race condition 
 _registration_started = False
 _shutdown_hooks_installed = False
 
 
 def _build_registration_kwargs():
+    """ prepare the information to send to the eureka """
     return {
         "eureka_server": settings.EUREKA_SERVER_URL,
-        "app_name": settings.EUREKA_APP_NAME,
-        "should_register": True,
-        "should_discover": False,
+        "app_name": settings.EUREKA_APP_NAME, # auth-service 
+        "should_register": True, # yes i want to register  so that other services can find me 
+        "should_discover": False, # this is so that i can discover other services that are registered  
         "instance_host": settings.EUREKA_INSTANCE_HOST,
         "instance_port": settings.EUREKA_INSTANCE_PORT,
         "home_page_url": settings.EUREKA_HOME_PAGE_URL,
@@ -50,6 +51,7 @@ def _install_shutdown_hooks():
 
 
 def register_eureka_service():
+    # here the magic begins 
     global _registration_started
 
     if not settings.EUREKA_SERVER_URL:
