@@ -1,8 +1,8 @@
 services:
-  app:
+  auth-service:
     build: .
     ports:
-      - "8000:8000"
+      - "8080:8000"
       - "50051:50051"
     env_file: .env
     environment:
@@ -19,29 +19,34 @@ services:
     depends_on:
       - postgres
       - redis
+    networks:
+      - chatapp
 
   postgres:
     image: postgres:17
     container_name: auth-postgres
-
     ports:
       - "5432:5432"
-
     restart: unless-stopped
-
     environment:
       POSTGRES_DB: auth_service
       POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: garvitpathak2003
-
+      POSTGRES_PASSWORD: auth_pass
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chatapp
 
   redis:
     image: redis:8-alpine
     container_name: auth-redis
-
     restart: unless-stopped
+    networks:
+      - chatapp
+
+networks:
+  chatapp:
+    external: true
 
 volumes:
   postgres_data:
