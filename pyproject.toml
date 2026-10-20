@@ -17,6 +17,7 @@ dependencies = [
     "argon2-cffi (>=25.1.0,<26.0.0)",
     "django-environ (>=0.14.0,<0.15.0)",
     "redis[hiredis] (>=8.0.1,<9.0.0)",
+    "gunicorn (>=23.0.0,<24.0.0)",
 ]
 
 
